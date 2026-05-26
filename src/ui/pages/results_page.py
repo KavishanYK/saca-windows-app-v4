@@ -765,6 +765,9 @@ class ResultsPage(QWidget):
     def _speak_step2(self):
         """TTS: detected symptoms → what to do steps → recommendation."""
         import threading
+        import src.utils.audio as _audio_mod
+        if _audio_mod._stopped:
+            return
         symptoms = self._detected_symptoms()
         triage   = self._triage()
         content  = self._result_data.get("result_content", {}) or {}
@@ -804,9 +807,14 @@ class ResultsPage(QWidget):
     def _speak_text(self, text: str):
         """Speak using macOS 'say' command, falling back to pyttsx3."""
         import subprocess, sys
+        import src.utils.audio as _audio_mod
         try:
             if sys.platform == "darwin":
-                subprocess.run(["say", text], check=False)
+                proc = subprocess.Popen(["say", text])
+                _audio_mod._tts_proc = proc
+                proc.wait()
+                if _audio_mod._tts_proc is proc:
+                    _audio_mod._tts_proc = None
             else:
                 import pyttsx3
                 engine = pyttsx3.init()

@@ -21,19 +21,35 @@ def _audio_path(filename: str) -> str:
 # Shared list of every in-flight QMediaPlayer instance
 _active: list[QMediaPlayer] = []
 
+# Track any running TTS subprocess (macOS 'say' / pyttsx3)
+_tts_proc = None
+
+# Set to True by stop_all(); cleared on next play so callbacks don't fire
+_stopped: bool = False
+
 
 def stop_all() -> None:
-    """Stop and discard every currently playing audio player."""
+    """Stop and discard every currently playing audio player and kill TTS."""
+    global _tts_proc, _stopped
+    _stopped = True
     for p in list(_active):
         try:
             p.stop()
         except Exception:
             pass
     _active.clear()
+    if _tts_proc is not None:
+        try:
+            _tts_proc.kill()
+        except Exception:
+            pass
+        _tts_proc = None
 
 
 def play(filename: str) -> None:
     """Fire-and-forget single-file playback."""
+    global _stopped
+    _stopped = False
     path = _audio_path(filename)
     if not os.path.exists(path):
         return
@@ -56,6 +72,9 @@ def play(filename: str) -> None:
 
 def play_sequence(filenames: list[str], on_complete=None) -> None:
     """Play files one after another; call on_complete when the last one ends."""
+    global _stopped
+    if _stopped:
+        return
     if not filenames:
         if on_complete:
             on_complete()
@@ -77,7 +96,8 @@ def play_sequence(filenames: list[str], on_complete=None) -> None:
         if status == QMediaPlayer.EndOfMedia:
             if p in _active:
                 _active.remove(p)
-            play_sequence(rest, on_complete)
+            if not _stopped:
+                play_sequence(rest, on_complete)
 
     player.mediaStatusChanged.connect(_on_status)
     player.play()
