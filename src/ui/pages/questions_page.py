@@ -773,7 +773,7 @@ class QuestionsPage(QWidget):
         self.percent_label.setText(f"{percent}%")
         self.progress_bar.setValue(percent)
 
-        speak_mode = self.entry_mode == "voice"
+        speak_mode = False  # voice controls removed from follow-up questions
 
         self.speaker_btn.setVisible(speak_mode)
         self.mic_btn.setVisible(speak_mode)
