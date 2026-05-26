@@ -530,15 +530,15 @@ def _condition_name(symptoms: Iterable[str], triage_level: str, ui_language: str
             return "Skin infection — needs review" if not kr else "Skin infekshan — nid lukluk"
 
     # Mild conditions
-    if symptom_set & {"chest_pain", "severe_chest_pain", "difficulty_breathing", "shortness_of_breath"}:
+    if symptom_set & {"chest_pain", "severe_chest_pain", "difficulty_breathing", "shortness_of_breath", "breathing_problem"}:
         return "Breathing or chest problem" if not kr else "Brith o jes trabul"
+    if symptom_set & {"stomach_pain", "abdominal_pain", "vomiting", "diarrhea", "nausea"}:
+        return "Stomach upset" if not kr else "Beli trobul"
     if symptom_set & {"fever", "high_fever", "cough", "sore_throat", "body_aches", "fatigue", "runny_nose", "mild_fever", "mild_cough"}:
         return "A mild flu or cold" if not kr else "Liklik flu o kol"
-    if symptom_set & {"abdominal_pain", "vomiting", "diarrhea", "nausea"}:
-        return "Stomach upset" if not kr else "Beli trobul"
     if symptom_set & {"rash", "skin_rash", "skin_redness", "itching"}:
         return "Skin irritation" if not kr else "Skin trabul"
-    if symptom_set & {"headache", "severe_headache", "dizziness", "mild_headache"}:
+    if symptom_set & {"headache", "severe_headache", "dizziness", "dizzy", "mild_headache"}:
         return "Headache or dizziness" if not kr else "Hedake o dizi"
     return "General health concern" if not kr else "Jeneral helt trabul"
 

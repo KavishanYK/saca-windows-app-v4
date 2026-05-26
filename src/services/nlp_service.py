@@ -157,7 +157,7 @@ COMMON_WORDS = {
 }
 
 NEGATION_WORDS = {"no", "not", "without", "never", "none", "nothing", "nobody", "deny", "denies", "lack", "absent"}
-SCOPE_RESET_WORDS = {"but", "however", "although", "though", "yet", "except", "while", "whereas"}
+SCOPE_RESET_WORDS = {"and", "but", "however", "although", "though", "yet", "except", "while", "whereas"}
 
 
 @dataclass
@@ -410,10 +410,18 @@ def _detect_negations(mapped_text: str, extracted: List[str]) -> Tuple[List[str]
 
 def _canonical_for_app(symptoms_present: List[str]) -> List[str]:
     canonical: List[str] = []
+    # Specific pain keys — if any of these are present, drop the generic 'pain'
+    _SPECIFIC_PAIN = {
+        "stomach_pain", "chest_pain", "abdominal_pain", "body_pain",
+        "sore_throat", "headache", "breathing_problem",
+    }
     for sym in symptoms_present:
         app_key = APP_SYMPTOM_MAP.get(sym, sym.replace(" ", "_"))
         if app_key not in canonical:
             canonical.append(app_key)
+    # Drop standalone 'pain' if a more specific pain symptom is already present
+    if "pain" in canonical and any(k in canonical for k in _SPECIFIC_PAIN):
+        canonical = [k for k in canonical if k != "pain"]
     return canonical
 
 
