@@ -336,8 +336,15 @@ def _train_model(
             yb = y_tr[start:start + BATCH_SIZE]
             optimizer.zero_grad()
             logits = model(xb)
-            loss = loss_fn(logits, yb)
-            loss.backward()
+            loss = loss_fn(logits, yb.float())
+            try:
+                loss.backward()
+            except RuntimeError:
+                # Fallback: recompute with explicit grad tracking
+                xb_g = xb.detach().requires_grad_(False)
+                logits2 = model(xb_g)
+                loss2 = loss_fn(logits2, yb.float())
+                loss2.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 

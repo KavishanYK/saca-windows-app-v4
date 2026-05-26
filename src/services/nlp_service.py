@@ -303,8 +303,10 @@ def _translate(text: str, kriol_dict: Dict[str, str], detected_language: str) ->
     if detected_language == "english":
         return text, "passthrough", 0.0, None
     try:
-        from nlp.kriol_translator import translate_kriol_to_english, post_process_translation
-        translated = translate_kriol_to_english(text, kriol_dict)
+        from nlp.kriol_translator import translate_kriol_to_english, post_process_translation, correct_kriol_transcription
+        # Normalise Whisper phonetics / run-on words before dictionary lookup
+        corrected = correct_kriol_transcription(text, kriol_dict)
+        translated = translate_kriol_to_english(corrected, kriol_dict)
         translated = post_process_translation(translated)
         return translated, "dict", 0.0, None
     except Exception as exc:

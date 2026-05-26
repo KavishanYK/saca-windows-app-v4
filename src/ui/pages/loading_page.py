@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QMovie
 from src.utils.paths import asset_path
+from src.utils.audio import play as _play, stop_all as _stop_all
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +177,15 @@ class LoadingPage(QWidget):
         self._bar.setValue(0)
         self._pct_label.setText("0%")
 
-    def start_analysis(self, nlp_output: dict, answers: dict, language: str):
+    def start_analysis(self, nlp_output: dict, answers: dict, language: str):  # no audio — severity plays on results page
         """Called by MainWindow to begin final analysis."""
         self._mode = "final"
-        self._title_label.setText("Analysing Your Symptoms")
+        self._title_label.setText(
+            "Lukum Yu Simptom" if language == "kriol" else "Analysing Your Symptoms"
+        )
         self._reset_state()
+        _stop_all()
+        _play("Kriol-loading.mp3" if language == "kriol" else "English-loading.mp3")
 
         # Start fake progress (0 → 80 % slowly; held until worker done)
         self._progress_timer.start(60)
@@ -200,8 +205,12 @@ class LoadingPage(QWidget):
     def start_initial_analysis(self, text: str, language: str):
         """Called when user submits voice/text/picture input."""
         self._mode = "initial"
-        self._title_label.setText("Processing Your Input")
+        self._title_label.setText(
+            "Prosesim Yu Tok" if language == "kriol" else "Processing Your Input"
+        )
         self._reset_state()
+        _stop_all()
+        _play("Kriol-loading.mp3" if language == "kriol" else "English-loading.mp3")
         self._progress_timer.start(60)
 
         self._thread = QThread()

@@ -1,17 +1,86 @@
+import os
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QRect, Property
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QRect, Property, QUrl
 from PySide6.QtGui import (
     QTextCursor, QPainter, QPen, QColor, QFont,
     QLinearGradient, QPainterPath, QPixmap,
 )
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QPushButton, QFrame, QSizePolicy,
     QStackedWidget, QScrollArea, QGraphicsOpacityEffect,
     QAbstractButton,
 )
+from src.ui.widgets.help_popup import HelpButton
+from src.utils.audio import play as _play, play_sequence as _play_sequence, stop_all as _stop_all
+
+# Kriol transcription corrector (applied to raw Whisper output in Kriol mode)
+try:
+    from nlp.kriol_translator import correct_kriol_transcription, load_kriol_dictionary as _load_kriol_dict
+    import os as _os
+    _KRIOL_DICT_PATH = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..", "data", "kriol_dictionary.json")
+    _KRIOL_DICT = _load_kriol_dict(_os.path.normpath(_KRIOL_DICT_PATH))
+except Exception:
+    correct_kriol_transcription = None
+    _KRIOL_DICT = {}
+
+
+def _audio_path(filename: str) -> str:
+    base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(
+        os.path.join(base, "..", "..", "..", "assets", "audio", filename)
+    )
+
+
+def _play(filename: str):
+    """Fire-and-forget audio playback."""
+    path = _audio_path(filename)
+    if not os.path.exists(path):
+        return
+    player = QMediaPlayer()
+    audio_out = QAudioOutput()
+    audio_out.setVolume(1.0)
+    player.setAudioOutput(audio_out)
+    player.setSource(QUrl.fromLocalFile(path))
+    player.play()
+    player._audio_out = audio_out
+    _play._active.append(player)
+    player.playbackStateChanged.connect(
+        lambda state, p=player: _play._active.remove(p)
+        if p in _play._active and state == QMediaPlayer.StoppedState else None
+    )
+
+_play._active = []
+
+
+def _play_sequence(filenames: list, on_complete=None):
+    """Play a list of audio files one after another, then call on_complete."""
+    if not filenames:
+        if on_complete:
+            on_complete()
+        return
+    first, *rest = filenames
+    path = _audio_path(first)
+    if not os.path.exists(path):
+        _play_sequence(rest, on_complete)
+        return
+    player = QMediaPlayer()
+    audio_out = QAudioOutput()
+    audio_out.setVolume(1.0)
+    player.setAudioOutput(audio_out)
+    player.setSource(QUrl.fromLocalFile(path))
+    player._audio_out = audio_out
+    _play._active.append(player)
+    def _on_status(status, p=player):
+        if status == QMediaPlayer.EndOfMedia:
+            if p in _play._active:
+                _play._active.remove(p)
+            _play_sequence(rest, on_complete)
+    player.mediaStatusChanged.connect(_on_status)
+    player.play()
 
 
 
@@ -82,10 +151,11 @@ class InitialVoiceWorker(QThread):
 
     _cached_model = None
 
-    def __init__(self, duration_seconds=5, whisper_model_name="small"):
+    def __init__(self, duration_seconds=5, whisper_model_name="small", is_kriol=False):
         super().__init__()
         self.duration_seconds = duration_seconds
         self.whisper_model_name = whisper_model_name
+        self.is_kriol = is_kriol
         self._cancelled = False
 
     def cancel(self):
@@ -140,7 +210,24 @@ class InitialVoiceWorker(QThread):
             if self._cancelled:
                 return
 
-            result = InitialVoiceWorker._cached_model.transcribe(str(temp_path), fp16=False)
+            _KRIOL_PROMPT = (
+                "Mi garra fiva. Mi garra beli pen. Mi garra hedek. Mi garra kof. "
+                "Mi garra soa trot. Mi garra wota nos. Mi garra ches pen. "
+                "Mi no ken brij. Mi gidibat. Mi fil sik. Mi garr strongpela pen. "
+                "Mi garra strongpela ches pen en mi no ken brij en mi gidibat. "
+                "Yuwai. Nomu. En. Fo. Tu dei."
+            )
+
+            transcribe_kwargs = dict(fp16=False)
+            if self.is_kriol:
+                # Use a Kriol prompt so Whisper outputs Kriol words, not English
+                transcribe_kwargs["initial_prompt"] = _KRIOL_PROMPT
+            else:
+                transcribe_kwargs["language"] = "en"
+
+            result = InitialVoiceWorker._cached_model.transcribe(
+                str(temp_path), **transcribe_kwargs
+            )
             text = (result.get("text") or "").strip()
 
             if self._cancelled:
@@ -149,6 +236,13 @@ class InitialVoiceWorker(QThread):
             if not text:
                 self.error.emit("I could not hear clearly. Please try again.")
                 return
+
+            # For Kriol, remove Whisper's sentence punctuation so the raw
+            # Kriol words are shown as one continuous phrase
+            if self.is_kriol:
+                import re as _re
+                text = _re.sub(r"[.!?,;]+", "", text)
+                text = _re.sub(r"\s+", " ", text).strip()
 
             self.transcription_ready.emit(text)
 
@@ -406,7 +500,30 @@ class InputPage(QWidget):
             }
             QPushButton:hover { background-color: rgba(139,58,46,0.20); }
         """)
+        self.back_btn.clicked.connect(_stop_all)
         self.back_btn.clicked.connect(self.back_clicked.emit)
+
+        self._help_btn = HelpButton(
+            en_title="Entering Your Symptoms",
+            en_text="Tell us what symptoms you have.\n\n"
+                    "• Press the microphone and speak clearly, OR\n"
+                    "• Type your symptoms in the text box.\n\n"
+                    "You can also tap the quick-select buttons to add common symptoms quickly.\n\n"
+                    "When ready, press Next to continue.",
+            kr_title="Putim Yu Simptom",
+            kr_text="Telim mibala wanem simptom yu garrim.\n\n"
+                    "• Pres maikrofon en tok klin, O\n"
+                    "• Raidim simptom langa tekst boks.\n\n"
+                    "Yu ken tapim kwik-jusum batnit blong aderim simptom kwiktaim.\n\n"
+                    "Taim yu redi, pres Nekis blong gowin.",
+        )
+        top_row = QHBoxLayout()
+        top_row.setSpacing(0)
+        top_row.addWidget(self.back_btn, 0, Qt.AlignVCenter)
+        top_row.addStretch()
+        top_row.addWidget(self._help_btn, 0, Qt.AlignVCenter)
+        right_layout.addLayout(top_row)
+        right_layout.addSpacing(12)
 
         # heading
         self._page_heading = _FadeInLabel("What's wrong?", duration=700)
@@ -438,6 +555,7 @@ class InputPage(QWidget):
         self.emergency_btn.setCursor(Qt.PointingHandCursor)
         self.emergency_btn.setFixedHeight(52)
         self.emergency_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.emergency_btn.clicked.connect(_stop_all)
         self.emergency_btn.clicked.connect(self.emergency_clicked.emit)
 
         self.next_btn = QPushButton("Next  →")
@@ -449,7 +567,12 @@ class InputPage(QWidget):
         btn_row.addWidget(self.emergency_btn)
         btn_row.addWidget(self.next_btn)
 
-        right_layout.addWidget(self.back_btn, 0, Qt.AlignLeft)
+        _top = QHBoxLayout()
+        _top.setSpacing(0)
+        _top.addWidget(self.back_btn, 0, Qt.AlignVCenter)
+        _top.addStretch()
+        _top.addWidget(self._help_btn, 0, Qt.AlignVCenter)
+        right_layout.addLayout(_top)
         right_layout.addSpacing(12)
         right_layout.addWidget(self._page_heading)
         right_layout.addSpacing(4)
@@ -464,6 +587,7 @@ class InputPage(QWidget):
         root.addWidget(self._hero)
         root.addWidget(right, 1)
 
+        self.next_btn.clicked.connect(_stop_all)
         self.next_btn.clicked.connect(self._submit)
         self._update_mode_ui()
         self._update_next_button()
@@ -472,6 +596,52 @@ class InputPage(QWidget):
         """Called by MainWindow after the page becomes visible (post curtain-reveal)."""
         QTimer.singleShot(60,  lambda: self._hero_title.play())
         QTimer.singleShot(180, lambda: self._page_heading.play())
+        if self.current_mode == "voice":
+            audio = "Kriol-Speak.mp3" if self._is_kriol() else "English-Speak.mp3"
+            QTimer.singleShot(400, lambda: _play_sequence([audio], on_complete=self._animate_mic_btn))
+        elif self.current_mode == "type":
+            audio = "Kriol-typing.mp3" if self._is_kriol() else "English-typing.mp3"
+            QTimer.singleShot(400, lambda: _play_sequence([audio], on_complete=self._animate_type_box))
+
+    def _animate_type_box(self):
+        """Nudge the text input box down then spring back."""
+        box = self.input_box
+        orig = box.geometry()
+        nudged = orig.translated(0, 10)
+        a1 = QPropertyAnimation(box, b"geometry", box)
+        a1.setDuration(120)
+        a1.setStartValue(orig)
+        a1.setEndValue(nudged)
+        a1.setEasingCurve(QEasingCurve.OutQuad)
+        a2 = QPropertyAnimation(box, b"geometry", box)
+        a2.setDuration(240)
+        a2.setStartValue(nudged)
+        a2.setEndValue(orig)
+        a2.setEasingCurve(QEasingCurve.OutBack)
+        a1.finished.connect(a2.start)
+        a1.start()
+        box._nudge_a1 = a1
+        box._nudge_a2 = a2
+
+    def _animate_mic_btn(self):
+        """Nudge the mic button down then spring back — same pattern as mode cards."""
+        btn = self.mic_btn
+        orig = btn.geometry()
+        nudged = orig.translated(0, 12)
+        a1 = QPropertyAnimation(btn, b"geometry", btn)
+        a1.setDuration(130)
+        a1.setStartValue(orig)
+        a1.setEndValue(nudged)
+        a1.setEasingCurve(QEasingCurve.OutQuad)
+        a2 = QPropertyAnimation(btn, b"geometry", btn)
+        a2.setDuration(260)
+        a2.setStartValue(nudged)
+        a2.setEndValue(orig)
+        a2.setEasingCurve(QEasingCurve.OutBack)
+        a1.finished.connect(a2.start)
+        a1.start()
+        self._mic_nudge_a1 = a1
+        self._mic_nudge_a2 = a2
 
     # --------------------------------------------------
     # Type page
@@ -713,7 +883,7 @@ class InputPage(QWidget):
             "Lisin nau..." if self._is_kriol() else "Listening now..."
         )
 
-        self._voice_worker = InitialVoiceWorker(duration_seconds=5, whisper_model_name="small")
+        self._voice_worker = InitialVoiceWorker(duration_seconds=8 if self._is_kriol() else 5, whisper_model_name="small", is_kriol=self._is_kriol())
         self._voice_worker.status_changed.connect(self._on_voice_status)
         self._voice_worker.transcription_ready.connect(self._on_voice_text)
         self._voice_worker.error.connect(self._on_voice_error)
@@ -816,6 +986,7 @@ class InputPage(QWidget):
 
     def set_strings(self, strings: dict):
         self.strings = strings or {}
+        self._help_btn.set_kriol(self._is_kriol())
         self._update_mode_ui()
 
     def _is_kriol(self) -> bool:

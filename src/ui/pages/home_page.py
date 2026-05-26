@@ -1,7 +1,8 @@
 from PySide6.QtCore import (
     Qt, Signal, QPropertyAnimation, QEasingCurve,
-    QTimer, QUrl, Property,
+    QTimer, Property,
 )
+from src.ui.widgets.help_popup import HelpButton
 from PySide6.QtGui import (
     QPainter, QPen, QColor, QFont, QLinearGradient, QBrush,
     QPainterPath, QPixmap,
@@ -13,36 +14,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
 )
 import os
-
-
-def _audio_path(filename: str) -> str:
-    base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "..", "..", "..", "assets", "audio", filename)
-
-
-def _play(filename: str):
-    """Fire-and-forget audio playback."""
-    path = os.path.normpath(_audio_path(filename))
-    if not os.path.exists(path):
-        return
-    player = QMediaPlayer()
-    audio_out = QAudioOutput()
-    audio_out.setVolume(1.0)
-    player.setAudioOutput(audio_out)
-    player.setSource(QUrl.fromLocalFile(path))
-    player.play()
-    # Keep references alive until playback ends
-    player._audio_out = audio_out
-    player.playbackStateChanged.connect(
-        lambda state, p=player: None  # holds ref
-    )
-    _play._active.append(player)
-    player.playbackStateChanged.connect(
-        lambda state, p=player: _play._active.remove(p)
-        if p in _play._active and state == QMediaPlayer.StoppedState else None
-    )
-
-_play._active = []
+from src.utils.audio import play as _play, play_sequence as _play_sequence, stop_all as _stop_all
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -719,10 +691,21 @@ class HomePage(QWidget):
             os.path.dirname(os.path.abspath(__file__)),
             "..", "..", "..", "assets", "anim", "Translate language.json"
         ))
-        self._lang_anim = LottieWidget(lottie_path, size=lottie_size)
+        self._lang_help_btn = HelpButton(
+            en_title="Language Selection",
+            en_text="Choose your preferred language.\n\n"
+                    "• Select English to use the app in English.\n"
+                    "• Select Kriol to use the app in Kriol language.\n\n"
+                    "Pick the language you are most comfortable with.",
+            kr_title="Jusum Langgwej",
+            kr_text="Jusum langgwej yu laik.\n\n"
+                    "• Jusum Ingris blong yusum app langa Ingris.\n"
+                    "• Jusum Kriol blong yusum app langa Kriol.\n\n"
+                    "Jusum langgwej we i isi blong yu.",
+        )
         heading_row.addWidget(heading, 0, Qt.AlignVCenter)
-        heading_row.addStretch()          # pushes Lottie to far right
-        heading_row.addWidget(self._lang_anim, 0, Qt.AlignVCenter)
+        heading_row.addStretch()
+        heading_row.addWidget(self._lang_help_btn, 0, Qt.AlignVCenter)
 
         sub = QLabel("Jus yu langgus")
         sub.setObjectName("rightSubheading")
@@ -833,7 +816,7 @@ class HomePage(QWidget):
         right_layout.setAlignment(Qt.AlignTop)
 
         # back button
-        self.back_btn = QPushButton("← Back")
+        self.back_btn = QPushButton("‹  Back")
         self.back_btn.setObjectName("backLinkButton")
         self.back_btn.setCursor(Qt.PointingHandCursor)
         self.back_btn.setFixedHeight(40)
@@ -851,6 +834,20 @@ class HomePage(QWidget):
             QPushButton:hover { background-color: rgba(139,58,46,0.20); }
         """)
         self.back_btn.clicked.connect(self._go_to_language_screen)
+        self._mode_help_btn = HelpButton(
+            en_title="How to Tell Us",
+            en_text="Choose how you want to describe your symptoms.\n\n"
+                    "• Speak – Press the mic and talk out loud. We will listen.\n"
+                    "• Body Map – Tap the body diagram to show where it hurts.\n"
+                    "• Type – Write your symptoms in the text box.\n\n"
+                    "Pick whichever feels easiest for you.",
+            kr_title="Haumej Yu Laik Telim Mibala",
+            kr_text="Jusum wei yu laik diskaibim yu simptom.\n\n"
+                    "• Tok – Pres maik en toktok laut. Mibala bai lisin.\n"
+                    "• Bodi Mep – Tapim pikja blong shoim we i hati.\n"
+                    "• Raidim – Raidim simptom langa tekst boks.\n\n"
+                    "Jusum wei we i isi blong yu.",
+        )
 
         # heading row
         heading = _FadeInLabel("Choose how\nto share", duration=600, delay=120)
@@ -880,8 +877,11 @@ class HomePage(QWidget):
             accent_color="#7A6020", base_color="#FAF4E6",
         )
 
+        self.speak_card.clicked.connect(_stop_all)
         self.speak_card.clicked.connect(self.speak_clicked.emit)
+        self.picture_card.clicked.connect(_stop_all)
         self.picture_card.clicked.connect(self.pictures_clicked.emit)
+        self.type_card.clicked.connect(_stop_all)
         self.type_card.clicked.connect(self.type_clicked.emit)
 
         # Emergency
@@ -889,9 +889,15 @@ class HomePage(QWidget):
         self.mode_emergency_btn.setObjectName("homeEmergencyOutlineButton")
         self.mode_emergency_btn.setCursor(Qt.PointingHandCursor)
         self.mode_emergency_btn.setFixedSize(340, 52)
+        self.mode_emergency_btn.clicked.connect(_stop_all)
         self.mode_emergency_btn.clicked.connect(self.emergency_clicked.emit)
 
-        right_layout.addWidget(self.back_btn, 0, Qt.AlignLeft)
+        top_row_m = QHBoxLayout()
+        top_row_m.setSpacing(0)
+        top_row_m.addWidget(self.back_btn, 0, Qt.AlignVCenter)
+        top_row_m.addStretch()
+        top_row_m.addWidget(self._mode_help_btn, 0, Qt.AlignVCenter)
+        right_layout.addLayout(top_row_m)
         right_layout.addSpacing(16)
         right_layout.addWidget(heading)
         right_layout.addSpacing(6)
@@ -922,8 +928,39 @@ class HomePage(QWidget):
         self._mode_hero_tag.play()
         self._mode_heading.play()
         self._mode_sub.play()
+        # Play main screen voiceover for the selected language, then the input guide
+        first  = "Kriol Main Screen.mp3"    if code == "kriol" else "English Main Screen.mp3"
+        second = "Kriol-Main Screen2.mp3"   if code == "kriol" else "English-Main Screen2.mp3"
+        QTimer.singleShot(300, lambda: _play_sequence([first, second], on_complete=self._animate_mode_cards))
+
+    def _animate_mode_cards(self):
+        """Give the 3 cards a staggered nudge animation after the audio ends."""
+        cards = [self.speak_card, self.picture_card, self.type_card]
+        for i, card in enumerate(cards):
+            delay = i * 180
+            def _nudge(c=card):
+                orig = c.geometry()
+                nudged = orig.translated(0, 10)
+                # move down
+                a1 = QPropertyAnimation(c, b"geometry", c)
+                a1.setDuration(120)
+                a1.setStartValue(orig)
+                a1.setEndValue(nudged)
+                a1.setEasingCurve(QEasingCurve.OutQuad)
+                # bounce back up
+                a2 = QPropertyAnimation(c, b"geometry", c)
+                a2.setDuration(220)
+                a2.setStartValue(nudged)
+                a2.setEndValue(orig)
+                a2.setEasingCurve(QEasingCurve.OutBack)
+                a1.finished.connect(a2.start)
+                a1.start()
+                c._nudge_a1 = a1
+                c._nudge_a2 = a2
+            QTimer.singleShot(delay, _nudge)
 
     def _go_to_language_screen(self):
+        _stop_all()
         self.stack.setCurrentWidget(self.language_screen)
 
     def show_mode_screen(self):
@@ -944,6 +981,20 @@ class HomePage(QWidget):
 
         self.back_btn.setText("‹  Bek" if is_kriol else "‹  Back")
 
+        # Mode screen hero + headings
+        self._mode_hero_title.setText(
+            "Haumej wei\nyu laik\ntelim mibala?" if is_kriol else "How do\nyou want\nto tell us?"
+        )
+        self._mode_hero_tag.setText(
+            "Yu wei,\nyu jusum." if is_kriol else "Your voice,\nyour choice."
+        )
+        self._mode_heading.setText(
+            "Jusum wei\nyu laik" if is_kriol else "Choose how\nto share"
+        )
+        self._mode_sub.setText(
+            "Pikimup wei im isi blong yu" if is_kriol else "Pick what feels easiest for you"
+        )
+
         self.speak_card.set_content(
             "mic",
             "Tok" if is_kriol else "Speak",
@@ -962,3 +1013,7 @@ class HomePage(QWidget):
         self.mode_emergency_btn.setText(
             "⚠   Imijensi Elp" if is_kriol else "⚠   Emergency Help"
         )
+        self._lang_help_btn.set_kriol(False)  # language screen always bilingual
+        self._mode_help_btn.set_kriol(is_kriol)
+        self._lang_help_btn.set_kriol(False)  # language screen is always bilingual
+        self._mode_help_btn.set_kriol(is_kriol)

@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
         self.strings = load_strings(self.language_code)
         self.home_page.set_strings(self.strings)
         self.input_page.set_strings(self.strings)
+        self.symptom_selection_page.set_language(self.language_code)
         self.symptom_selection_page.set_strings(self.strings)
         self.questions_page.set_strings(self.strings)
         self.results_page.set_strings(self.strings)
@@ -188,6 +189,9 @@ class MainWindow(QMainWindow):
                 self._show_page(self._pending_index, self._pending_emergency)
 
     def go_home(self, animated: bool = True):
+        # Clear all inputs so the next session starts fresh
+        self.input_page.clear_input()
+        self.symptom_selection_page.clear_selection()
         if animated:
             self._show_page(0, emergency=False)
         else:

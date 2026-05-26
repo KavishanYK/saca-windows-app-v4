@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
+from src.ui.widgets.help_popup import HelpButton
+from src.utils.audio import play_sequence as _play_sequence, stop_all as _stop_all
 
 
 # ── Palettes ──────────────────────────────────────────────────────────────────
@@ -241,11 +243,11 @@ class _Step1(QWidget):
         root.addWidget(self._main, 1)
 
         # Nav bar — Emergency only
-        emg_btn = _nav_btn("\u26a0\ufe0f  Emergency", danger=True)
-        emg_btn.clicked.connect(self.emergency_clicked)
-        root.addWidget(_nav_bar(emg_btn))
+        self._emg_btn = _nav_btn("\u26a0\ufe0f  Emergency", danger=True)
+        self._emg_btn.clicked.connect(self.emergency_clicked)
+        root.addWidget(_nav_bar(self._emg_btn))
 
-    def update(self, triage: str, condition: str, cta_text: str):
+    def update(self, triage: str, condition: str, cta_text: str, kr: bool = False):
         self._triage = triage
         p = _P[triage]
         self._card.setStyleSheet(
@@ -253,8 +255,8 @@ class _Step1(QWidget):
             f"stop:0 {p['bg']}, stop:1 {p['bg_dark']}); border:none; }}"
         )
         self._icon_lbl.setText(_ICONS[triage])
-        en, kr = _LABELS[triage]
-        self._verdict_lbl.setText(en)
+        en, kr_txt = _LABELS[triage]
+        self._verdict_lbl.setText(kr_txt if kr else en)
         self._condition_lbl.setText(condition)
         self._cta_btn.setText(cta_text)
 
@@ -308,8 +310,24 @@ class _Step2(QWidget):
             QPushButton:hover { background-color: rgba(139,58,46,0.20); }
         """)
         back_btn.clicked.connect(self.back_clicked)
+        self._back_btn = back_btn
+        self._help_btn = HelpButton(
+            en_title="Your Results",
+            en_text="These are your health assessment results based on your symptoms.\n\n"
+                    "• Step 1 shows the overall verdict — how urgent your situation may be.\n"
+                    "• Step 2 (this screen) shows what to do and what symptoms were detected.\n\n"
+                    "Follow the recommended steps and seek help from a health worker if you are unsure or if symptoms worsen.\n\n"
+                    "This is a support tool only — it does not replace professional medical advice.",
+            kr_title="Yu Rizalt",
+            kr_text="Diswan i yu helt asesmen rizalt blong yu simptom.\n\n"
+                    "• Step 1 i shoim ol rizalt — hau bebet yu situesen ken bi.\n"
+                    "• Step 2 (diswan skrin) i shoim wanim fo du en wanem simptom bin faindim.\n\n"
+                    "Folem rekomendeishin step en lukaut blong elp long helt woka if yu no shua o simptom i kamap woswan.\n\n"
+                    "Diswan sapot tul nomo — i no ripleis prafesenel medikol advaes.",
+        )
         top_lay.addWidget(back_btn)
         top_lay.addStretch()
+        top_lay.addWidget(self._help_btn)
         dots_row2 = QHBoxLayout()
         dots_row2.setSpacing(8)
         self._dots = [_step_dot(i == 1) for i in range(2)]
@@ -378,12 +396,12 @@ class _Step2(QWidget):
         sym_lay = QVBoxLayout(self._sym_card)
         sym_lay.setContentsMargins(24, 18, 24, 18)
         sym_lay.setSpacing(10)
-        sym_hdr = QLabel("Symptoms detected:")
-        sym_hdr.setStyleSheet(
+        self._sym_hdr = QLabel("Symptoms detected:")
+        self._sym_hdr.setStyleSheet(
             "color:#8B3A2E; font-size:13px; font-weight:700; letter-spacing:0.6px;"
             "background:transparent; border:none;"
         )
-        sym_lay.addWidget(sym_hdr)
+        sym_lay.addWidget(self._sym_hdr)
         self._sym_lbl = QLabel()
         self._sym_lbl.setWordWrap(True)
         self._sym_lbl.setStyleSheet(
@@ -417,9 +435,9 @@ class _Step2(QWidget):
         # Nav bar
         self._done_btn = _nav_btn("\u21bb  Start Again")
         self._done_btn.clicked.connect(self.home_clicked)
-        emg_btn = _nav_btn("\u26a0\ufe0f  Emergency", danger=True)
-        emg_btn.clicked.connect(self.emergency_clicked)
-        root.addWidget(_nav_bar(self._done_btn, emg_btn))
+        self._emg_btn = _nav_btn("\u26a0\ufe0f  Emergency", danger=True)
+        self._emg_btn.clicked.connect(self.emergency_clicked)
+        root.addWidget(_nav_bar(self._done_btn, self._emg_btn))
 
     def update(self, triage: str, steps: List[str], symptoms: List[str],
                esc_text: str, done_text: str, todo_title: str, found_title: str):
@@ -589,7 +607,7 @@ class ResultsPage(QWidget):
         root.addWidget(self._stack, 1)
 
         # Wiring — animated transitions
-        self._s1.next_clicked.connect(lambda: self._go_to(1))
+        self._s1.next_clicked.connect(self._on_what_to_do_clicked)
         self._s1.emergency_clicked.connect(self.emergency_clicked)
 
         self._s2.back_clicked.connect(lambda: self._go_to(0))
@@ -633,6 +651,17 @@ class ResultsPage(QWidget):
 
     def set_strings(self, strings: Dict):
         self.strings = strings or {}
+        is_kriol = self.strings.get("back", "Back").strip().lower() == "bek"
+        emg_text = "⚠️  Imijensi" if is_kriol else "⚠️  Emergency"
+        # Step 1
+        self._s1._emg_btn.setText(emg_text)
+        # Step 2
+        self._s2._back_btn.setText("← Bek" if is_kriol else "← Back")
+        self._s2._emg_btn.setText(emg_text)
+        self._s2._sym_hdr.setText(
+            "Sikwan sain bin faindim:" if is_kriol else "Symptoms detected:"
+        )
+        self._s2._help_btn.set_kriol(is_kriol)
 
     def set_result(self, result_data: Dict):
         self._result_data = (result_data or {}).get("result", result_data or {})
@@ -671,6 +700,24 @@ class ResultsPage(QWidget):
     def _render(self):
         triage   = self._triage()
         kr       = self._is_kriol()
+
+        # Play severity audio → hero bounce, then tapmore audio → CTA button bounce
+        _stop_all()
+        prefix = "Kriol" if kr else "English"
+        if triage == "mild":
+            sev_audio = f"{prefix}-low.mp3"
+        elif triage == "moderate":
+            sev_audio = f"{prefix}-mid.mp3"
+        else:  # critical
+            sev_audio = f"{prefix}-high.mp3"
+        tapmore_audio = f"{prefix}-tapmore.mp3"
+
+        def _after_severity():
+            self._animate_severity_hero()
+            _play_sequence([tapmore_audio], on_complete=self._animate_cta_btn)
+
+        _play_sequence([sev_audio], on_complete=_after_severity)
+
         content  = self._result_data.get("result_content", {}) or {}
         condition = self._result_data.get("predicted_disease") or self._t(
             "General health problem", "Jeneral helt trabul"
@@ -694,6 +741,7 @@ class ResultsPage(QWidget):
             triage    = triage,
             condition = condition,
             cta_text  = kr_cta if kr else en_cta,
+            kr        = kr,
         )
 
         # Step 2 (combined: what to do + what we found)
@@ -706,3 +754,103 @@ class ResultsPage(QWidget):
             todo_title  = self._t("What to do", "Wanim fo du"),
             found_title = self._t("What we found", "Wanim bin faindim"),
         )
+
+    def _on_what_to_do_clicked(self):
+        """Transition to step 2 then speak the details aloud."""
+        _stop_all()
+        self._go_to(1)
+        # Wait for fade transition to finish before speaking
+        QTimer.singleShot(300, self._speak_step2)
+
+    def _speak_step2(self):
+        """TTS: detected symptoms → what to do steps → recommendation."""
+        import threading
+        symptoms = self._detected_symptoms()
+        triage   = self._triage()
+        content  = self._result_data.get("result_content", {}) or {}
+        steps    = content.get("what_to_do") or []
+        condition = self._result_data.get("predicted_disease") or "a general health problem"
+        en_esc, kr_esc = _ESC[triage]
+        kr = self._is_kriol()
+
+        parts = []
+        if symptoms:
+            sym_str = ", ".join(symptoms)
+            parts.append(
+                f"Mifela bin faindim {sym_str} from yu tok." if kr
+                else f"We have detected {sym_str} from your input."
+            )
+        else:
+            parts.append(
+                "Mifela no bin faindim sikwan sain." if kr
+                else "We could not detect specific symptoms."
+            )
+
+        if steps:
+            steps_str = ". ".join(steps[:3])
+            parts.append(
+                f"Yu mas {steps_str}." if kr
+                else f"You should {steps_str}."
+            )
+
+        parts.append(
+            f"Mifela rekamend: {condition}." if kr
+            else f"Our recommendation is {condition}."
+        )
+
+        full_text = "  ".join(parts)
+        threading.Thread(target=self._speak_text, args=(full_text,), daemon=True).start()
+
+    def _speak_text(self, text: str):
+        """Speak using macOS 'say' command, falling back to pyttsx3."""
+        import subprocess, sys
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["say", text], check=False)
+            else:
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty("rate", 150)
+                engine.say(text)
+                engine.runAndWait()
+        except Exception:
+            pass
+
+    def _animate_severity_hero(self):
+        widget = self._hero
+        orig   = widget.geometry()
+        nudged = orig.translated(0, -14)
+        a1 = QPropertyAnimation(widget, b"geometry", widget)
+        a1.setDuration(150)
+        a1.setStartValue(orig)
+        a1.setEndValue(nudged)
+        a1.setEasingCurve(QEasingCurve.OutQuad)
+        a2 = QPropertyAnimation(widget, b"geometry", widget)
+        a2.setDuration(300)
+        a2.setStartValue(nudged)
+        a2.setEndValue(orig)
+        a2.setEasingCurve(QEasingCurve.OutBack)
+        a1.finished.connect(a2.start)
+        a1.start()
+        widget._sev_a1 = a1
+        widget._sev_a2 = a2
+
+    def _animate_cta_btn(self):
+        """Bounce the 'What should I do?' button after tapmore audio finishes."""
+        btn = self._s1._cta_btn
+        orig   = btn.geometry()
+        nudged = orig.translated(0, -12)
+        a1 = QPropertyAnimation(btn, b"geometry", btn)
+        a1.setDuration(130)
+        a1.setStartValue(orig)
+        a1.setEndValue(nudged)
+        a1.setEasingCurve(QEasingCurve.OutQuad)
+        a2 = QPropertyAnimation(btn, b"geometry", btn)
+        a2.setDuration(260)
+        a2.setStartValue(nudged)
+        a2.setEndValue(orig)
+        a2.setEasingCurve(QEasingCurve.OutBack)
+        a1.finished.connect(a2.start)
+        a1.start()
+        btn._cta_a1 = a1
+        btn._cta_a2 = a2
