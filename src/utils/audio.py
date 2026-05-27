@@ -70,9 +70,13 @@ def play(filename: str) -> None:
     player.play()
 
 
-def play_sequence(filenames: list[str], on_complete=None) -> None:
+def play_sequence(filenames: list[str], on_complete=None, _continuation: bool = False) -> None:
     """Play files one after another; call on_complete when the last one ends."""
     global _stopped
+    # Reset the stopped flag only when starting a brand-new sequence (not
+    # when called recursively for the next file in the chain).
+    if not _continuation:
+        _stopped = False
     if _stopped:
         return
     if not filenames:
@@ -82,7 +86,7 @@ def play_sequence(filenames: list[str], on_complete=None) -> None:
     first, *rest = filenames
     path = _audio_path(first)
     if not os.path.exists(path):
-        play_sequence(rest, on_complete)   # skip missing, keep going
+        play_sequence(rest, on_complete, _continuation=True)   # skip missing, keep going
         return
     player = QMediaPlayer()
     audio_out = QAudioOutput()
@@ -97,7 +101,7 @@ def play_sequence(filenames: list[str], on_complete=None) -> None:
             if p in _active:
                 _active.remove(p)
             if not _stopped:
-                play_sequence(rest, on_complete)
+                play_sequence(rest, on_complete, _continuation=True)
 
     player.mediaStatusChanged.connect(_on_status)
     player.play()

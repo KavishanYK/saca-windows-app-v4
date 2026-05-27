@@ -775,11 +775,11 @@ class InputPage(QWidget):
         layout.addSpacing(16)
 
         # Transcript label
-        transcript_label = QLabel("Your words:")
-        transcript_label.setStyleSheet(
+        self._transcript_label = QLabel("Your words:")
+        self._transcript_label.setStyleSheet(
             "color:#6B4E3D; font-size:13px; font-weight:800; background:transparent;"
         )
-        layout.addWidget(transcript_label)
+        layout.addWidget(self._transcript_label)
         layout.addSpacing(6)
 
         # Transcript text box
@@ -1005,6 +1005,7 @@ class InputPage(QWidget):
             self._hero_tag.setText("Yu vois\nimpoten." if is_kriol else "Your voice\nmatters.")
             self.voice_status_label.setText("Tapim maik" if is_kriol else "Tap the mic")
             self.voice_helper_label.setText("")
+            self._transcript_label.setText("Yu wod:" if is_kriol else "Your words:")
             self.voice_text_box.setPlaceholderText(
                 "Yu tok bai so iya..." if is_kriol else "Your words will show here..."
             )

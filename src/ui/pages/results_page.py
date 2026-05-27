@@ -757,7 +757,9 @@ class ResultsPage(QWidget):
 
     def _on_what_to_do_clicked(self):
         """Transition to step 2 then speak the details aloud."""
+        import src.utils.audio as _audio_mod
         _stop_all()
+        _audio_mod._stopped = False   # allow TTS to start after transition
         self._go_to(1)
         # Wait for fade transition to finish before speaking
         QTimer.singleShot(300, self._speak_step2)

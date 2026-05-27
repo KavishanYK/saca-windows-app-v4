@@ -736,6 +736,17 @@ class QuestionsPage(QWidget):
         self.scale_mic_btn.setText(
             "🎙️  Tok namba" if is_kriol else "🎙️  Say number"
         )
+        self._pain_selected_header.setText(
+            "Yu jusum:" if is_kriol else "You selected:"
+        )
+        # Refresh progress label so it shows in the right language immediately
+        progress_template = self.strings.get(
+            "question_progress",
+            "Kwestin {current} long {total}" if is_kriol else "Question {current} of {total}"
+        )
+        total_steps = max(len(self.questions) + 1, 1)
+        current_step = min(self.current_index + 1, total_steps)
+        self.progress_label.setText(progress_template.format(current=current_step, total=total_steps))
 
     def set_questions(self, original_text: str, english_meaning: str, questions: list):
         self.answers = {"pain_scale": self.answers.get("pain_scale", 3)}
@@ -768,7 +779,8 @@ class QuestionsPage(QWidget):
         current_step = min(self.current_index + 1, total_steps)
         percent = int((current_step / total_steps) * 100)
 
-        progress_template = self.strings.get("question_progress", "Question {current} of {total}")
+        _default_progress = "Kwestin {current} long {total}" if self._is_kriol_mode() else "Question {current} of {total}"
+        progress_template = self.strings.get("question_progress", _default_progress)
         self.progress_label.setText(progress_template.format(current=current_step, total=total_steps))
         self.percent_label.setText(f"{percent}%")
         self.progress_bar.setValue(percent)
@@ -951,11 +963,16 @@ class QuestionsPage(QWidget):
         self.answers["pain_scale"] = value
         color = self._pain_colors[value - 1]
         emoji = self._pain_labels[value - 1]
-        names = ["None", "Minimal", "Mild", "Moderate", "Uncomfortable",
-                 "Distressing", "Severe", "Intense", "Very Severe", "Unbearable"]
-        lbl = names[value - 1]
-        # Update info card
-        self._pain_level_label.setText(f"Level {value}  —  {lbl}")
+        if self._is_kriol_mode():
+            names = ["Nomo", "Smol smol", "Mild", "Midel", "No komftabel",
+                     "Nogud", "Strongpela", "Intens", "Togeta nogud", "Anbearabol"]
+            lbl = names[value - 1]
+            self._pain_level_label.setText(f"Lebul {value}  —  {lbl}")
+        else:
+            names = ["None", "Minimal", "Mild", "Moderate", "Uncomfortable",
+                     "Distressing", "Severe", "Intense", "Very Severe", "Unbearable"]
+            lbl = names[value - 1]
+            self._pain_level_label.setText(f"Level {value}  —  {lbl}")
         self._pain_level_label.setStyleSheet(f"""
             font-size: 18px; font-weight: 900; color: {color}; background: transparent;
         """)
