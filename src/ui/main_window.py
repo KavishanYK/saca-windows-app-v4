@@ -14,6 +14,7 @@ from src.ui.pages.loading_page import LoadingPage
 from src.ui.widgets.background_widget import PatternBackgroundWidget
 from src.utils.lang import load_strings
 from src.utils.paths import asset_path
+from src.utils.audio import stop_all as _stop_all
 
 
 class MainWindow(QMainWindow):
@@ -87,6 +88,11 @@ class MainWindow(QMainWindow):
 
         self.go_home(animated=False)
 
+    def closeEvent(self, event):
+        """Stop all audio when the application window is closed."""
+        _stop_all()
+        super().closeEvent(event)
+
     def _prepare_page_backgrounds(self):
         """Let the pattern image show through normal pages; keep emergency plain."""
         pattern_pages = [
@@ -142,6 +148,7 @@ class MainWindow(QMainWindow):
         self.strings = load_strings(self.language_code)
         self.home_page.set_strings(self.strings)
         self.input_page.set_strings(self.strings)
+        self.symptom_selection_page.set_language(self.language_code)
         self.symptom_selection_page.set_strings(self.strings)
         self.questions_page.set_strings(self.strings)
         self.results_page.set_strings(self.strings)
@@ -188,6 +195,10 @@ class MainWindow(QMainWindow):
                 self._show_page(self._pending_index, self._pending_emergency)
 
     def go_home(self, animated: bool = True):
+        _stop_all()
+        # Clear all inputs so the next session starts fresh
+        self.input_page.clear_input()
+        self.symptom_selection_page.clear_selection()
         if animated:
             self._show_page(0, emergency=False)
         else:
@@ -235,6 +246,7 @@ class MainWindow(QMainWindow):
         self._show_page(3, emergency=False)
 
     def _handle_questions_back(self):
+        _stop_all()
         if self.current_entry_page == "pictures":
             self._show_page(2, emergency=False)
         else:

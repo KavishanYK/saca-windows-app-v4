@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from PySide6.QtCore import Qt, Signal, QPointF
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import (
     QPainter, QPen, QColor, QPainterPath, QLinearGradient, QFont,
 )
@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QSizePolicy, QDialog, QScrollArea, QGridLayout,
 )
+from src.ui.widgets.help_popup import HelpButton
+from src.utils.audio import play_sequence as _play_sequence, stop_all as _stop_all
 
 
 # ── Body region → symptoms data ───────────────────────────────────────────────
@@ -660,8 +662,28 @@ class SymptomSelectionPage(QWidget):
             }
             QPushButton:hover { background-color: rgba(139,58,46,0.20); }
         """)
+        self.back_btn.clicked.connect(_stop_all)
         self.back_btn.clicked.connect(self.back_clicked.emit)
-        rl.addWidget(self.back_btn, 0, Qt.AlignLeft)
+        self._help_btn = HelpButton(
+            en_title="Body Map",
+            en_text="Use the body diagram to show where you have pain or discomfort.\n\n"
+                    "• Tap a body part on the diagram, OR\n"
+                    "• Use the buttons on the right side to select a region.\n\n"
+                    "After selecting a body part, choose your specific symptoms from the popup that appears.\n\n"
+                    "Press Continue when you have selected all your symptoms.",
+            kr_title="Bodi Mep",
+            kr_text="Yusum bodi pikja blong shoim we i pein o yu fil nogud.\n\n"
+                    "• Tapim wan pat bodi langa pikja, O\n"
+                    "• Yusum batnit long rait sait blong jusum wan son.\n\n"
+                    "Afta jusum wan pat bodi, jusum yu simptom long popup we bai kamap.\n\n"
+                    "Pres Kontiniu taim yu jusum olgeta simptom.",
+        )
+        _top = QHBoxLayout()
+        _top.setSpacing(0)
+        _top.addWidget(self.back_btn, 0, Qt.AlignVCenter)
+        _top.addStretch()
+        _top.addWidget(self._help_btn, 0, Qt.AlignVCenter)
+        rl.addLayout(_top)
         rl.addSpacing(8)
 
         self._heading = QLabel("Tap where it hurts")
@@ -679,28 +701,36 @@ class SymptomSelectionPage(QWidget):
 
         body_row = QHBoxLayout()
         body_row.setSpacing(20)
-        body_row.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        body_row.setAlignment(Qt.AlignTop)
 
+        # Body diagram — left aligned
         self._body = BodyDiagramWidget()
-        body_row.addWidget(self._body, 0, Qt.AlignTop)
+        body_row.addWidget(self._body, 0, Qt.AlignTop | Qt.AlignLeft)
 
-        zones_col = QVBoxLayout()
-        zones_col.setSpacing(5)
-        zones_col.setAlignment(Qt.AlignTop)
-        zones_col.addSpacing(8)
+        # Right side: zone hint + 2-column grid of zone buttons
+        zones_panel = QVBoxLayout()
+        zones_panel.setSpacing(6)
+        zones_panel.setAlignment(Qt.AlignTop)
+        zones_panel.addSpacing(4)
 
-        zone_hint = QLabel("Tap a zone:")
-        zone_hint.setStyleSheet(
+        self._zone_hint_lbl = QLabel("Tap a zone:")
+        self._zone_hint_lbl.setStyleSheet(
             "font-size:12px; font-weight:900; color:#8B3A2E; background:transparent;"
         )
-        zones_col.addWidget(zone_hint)
+        zones_panel.addWidget(self._zone_hint_lbl)
 
-        for key in ["head", "throat", "chest", "abdomen", "back",
-                    "left_arm", "right_arm", "left_leg", "right_leg"]:
+        zones_grid = QGridLayout()
+        zones_grid.setHorizontalSpacing(8)
+        zones_grid.setVerticalSpacing(6)
+
+        self._zone_btns: Dict[str, QPushButton] = {}
+        zone_keys = ["head", "throat", "chest", "abdomen", "back",
+                     "left_arm", "right_arm", "left_leg", "right_leg"]
+        for idx, key in enumerate(zone_keys):
             info = BODY_REGION_LABELS[key]
             zbtn = QPushButton(f"{info[2]}  {info[0]}")
             zbtn.setCursor(Qt.PointingHandCursor)
-            zbtn.setFixedHeight(30)
+            zbtn.setFixedHeight(34)
             zbtn.setStyleSheet("""
                 QPushButton { background:#F2E8E3; color:#5A2A1E; border:1px solid #D4B8B0;
                               border-radius:8px; font-size:12px; font-weight:700;
@@ -708,23 +738,26 @@ class SymptomSelectionPage(QWidget):
                 QPushButton:hover { background:#E8D0C2; }
             """)
             zbtn.clicked.connect(lambda _, k=key: self._open_popup(k))
-            zones_col.addWidget(zbtn)
+            self._zone_btns[key] = zbtn
+            zones_grid.addWidget(zbtn, idx // 2, idx % 2)
 
-        zones_col.addSpacing(8)
-        whole_btn = QPushButton("\U0001f321  Whole body / General")
-        whole_btn.setCursor(Qt.PointingHandCursor)
-        whole_btn.setFixedHeight(36)
-        whole_btn.setStyleSheet("""
+        zones_panel.addLayout(zones_grid)
+        zones_panel.addSpacing(8)
+
+        self._whole_btn = QPushButton("\U0001f321  Whole body / General")
+        self._whole_btn.setCursor(Qt.PointingHandCursor)
+        self._whole_btn.setFixedHeight(36)
+        self._whole_btn.setStyleSheet("""
             QPushButton { background:#8B3A2E; color:white; border:none;
                           border-radius:10px; font-size:12px; font-weight:900;
                           padding:0px 12px; }
             QPushButton:hover { background:#6B2A1E; }
         """)
-        whole_btn.clicked.connect(lambda: self._open_popup("whole_body"))
-        zones_col.addWidget(whole_btn)
-        zones_col.addStretch()
+        self._whole_btn.clicked.connect(lambda: self._open_popup("whole_body"))
+        zones_panel.addWidget(self._whole_btn)
+        zones_panel.addStretch()
 
-        body_row.addLayout(zones_col)
+        body_row.addLayout(zones_panel, 1)
         rl.addLayout(body_row)
         rl.addSpacing(12)
 
@@ -770,13 +803,15 @@ class SymptomSelectionPage(QWidget):
                           border-radius:14px; font-size:15px; font-weight:900; }
             QPushButton:hover { background:#FDF3EE; }
         """)
+        self.emergency_btn.clicked.connect(_stop_all)
         self.emergency_btn.clicked.connect(self.emergency_clicked.emit)
 
-        self.continue_btn = QPushButton("Continue  \u2192")
+        self.continue_btn = QPushButton("Continue  →")
         self.continue_btn.setFixedHeight(52)
         self.continue_btn.setEnabled(False)
         self.continue_btn.setCursor(Qt.PointingHandCursor)
         self._style_continue(False)
+        self.continue_btn.clicked.connect(_stop_all)
         self.continue_btn.clicked.connect(self._emit_continue)
 
         bottom_row.addWidget(self.emergency_btn, 1)
@@ -822,12 +857,20 @@ class SymptomSelectionPage(QWidget):
             chip.removed.connect(self._remove_symptom)
             self._chips_layout.insertWidget(self._chips_layout.count() - 1, chip)
         count = len(self._selected)
+        is_kriol = self._language == "kriol"
         if count == 0:
-            self._count_label.setText("No symptoms selected yet")
+            self._count_label.setText(
+                "No sikwan sain jusum yet" if is_kriol else "No symptoms selected yet"
+            )
         elif count == 1:
-            self._count_label.setText("1 symptom selected  \u2014  tap more body parts to add")
+            self._count_label.setText(
+                "1 sikwan sain jusum  \u2014  klik moa pat bodi" if is_kriol
+                else "1 symptom selected  \u2014  tap more body parts to add"
+            )
         else:
-            self._count_label.setText(f"{count} symptoms selected")
+            self._count_label.setText(
+                f"{count} sikwan sain jusum" if is_kriol else f"{count} symptoms selected"
+            )
         self.continue_btn.setEnabled(count > 0)
         self._style_continue(count > 0)
 
@@ -858,12 +901,42 @@ class SymptomSelectionPage(QWidget):
         self._refresh_chips()
         self._body.set_active_regions(set())
 
+    def play_entry_animations(self):
+        """Called by MainWindow after the page becomes visible."""
+        audio = "Kriol-bodymap.mp3" if self._language == "kriol" else "English-bodymap.mp3"
+        QTimer.singleShot(300, lambda: _play_sequence([audio], on_complete=self._animate_zone_buttons))
+
+    def _animate_zone_buttons(self):
+        """Nudge all zone buttons + whole-body button in a staggered bounce."""
+        buttons = list(self._zone_btns.values()) + [self._whole_btn]
+        for i, btn in enumerate(buttons):
+            delay = i * 100
+            def _nudge(b=btn):
+                orig = b.geometry()
+                nudged = orig.translated(0, 8)
+                a1 = QPropertyAnimation(b, b"geometry", b)
+                a1.setDuration(110)
+                a1.setStartValue(orig)
+                a1.setEndValue(nudged)
+                a1.setEasingCurve(QEasingCurve.OutQuad)
+                a2 = QPropertyAnimation(b, b"geometry", b)
+                a2.setDuration(220)
+                a2.setStartValue(nudged)
+                a2.setEndValue(orig)
+                a2.setEasingCurve(QEasingCurve.OutBack)
+                a1.finished.connect(a2.start)
+                a1.start()
+                b._nudge_a1 = a1
+                b._nudge_a2 = a2
+            QTimer.singleShot(delay, _nudge)
+
     def set_language(self, language: str):
         self._language = language
 
     def set_strings(self, s: dict):
         self.strings   = s or {}
         is_kriol       = self._language == "kriol"
+        self._help_btn.set_kriol(is_kriol)
         self._heading.setText(
             s.get("body_map_title", "Tap where it hurts" if not is_kriol else "Klik we i hati")
         )
@@ -887,3 +960,16 @@ class SymptomSelectionPage(QWidget):
         self.continue_btn.setText(
             s.get("continue", "Continue  \u2192" if not is_kriol else "Kontiniu  \u2192")
         )
+        # Zone hint label
+        self._zone_hint_lbl.setText("Tapim wan son:" if is_kriol else "Tap a zone:")
+        # Zone buttons
+        for key, zbtn in self._zone_btns.items():
+            info = BODY_REGION_LABELS[key]
+            label = info[1] if is_kriol else info[0]
+            zbtn.setText(f"{info[2]}  {label}")
+        # Whole body button
+        self._whole_btn.setText(
+            "\U0001f321  Ol bodi / Jeneral" if is_kriol else "\U0001f321  Whole body / General"
+        )
+        # Refresh count label with correct language
+        self._refresh_chips()

@@ -19,6 +19,18 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QGraphicsOpacityEffect,
 )
+from src.ui.widgets.help_popup import HelpButton
+from src.utils.audio import play_sequence as _play_sequence, stop_all as _stop_all
+
+# Kriol transcription corrector
+try:
+    import os as _os
+    from nlp.kriol_translator import correct_kriol_transcription as _correct_kriol, load_kriol_dictionary as _load_kriol_dict
+    _KRIOL_DICT_PATH = _os.path.normpath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..", "data", "kriol_dictionary.json"))
+    _KRIOL_DICT = _load_kriol_dict(_KRIOL_DICT_PATH)
+except Exception:
+    _correct_kriol = None
+    _KRIOL_DICT = {}
 
 
 # ==========================================================
@@ -31,10 +43,11 @@ class QuestionVoiceWorker(QThread):
     transcription_ready = Signal(str)
     error = Signal(str)
 
-    def __init__(self, duration_seconds=4, whisper_model_name="small"):
+    def __init__(self, duration_seconds=4, whisper_model_name="small", is_kriol=False):
         super().__init__()
         self.duration_seconds = duration_seconds
         self.whisper_model_name = whisper_model_name
+        self.is_kriol = is_kriol
 
     def run(self):
         try:
@@ -72,12 +85,24 @@ class QuestionVoiceWorker(QThread):
                 return
 
             model = whisper.load_model(self.whisper_model_name)
-            result = model.transcribe(str(temp_path), fp16=False)
+            _KRIOL_PROMPT = (
+                "Mi garra fiva. Mi garra beli pen. Mi garra hedek. Mi garra kof. "
+                "Mi garra soa trot. Mi garra wota nos. Mi garra ches pen. "
+                "Mi no ken brij. Mi gidibat. Mi fil sik. Yuwai. Nomu."
+            )
+            transcribe_kwargs = dict(fp16=False)
+            if self.is_kriol:
+                transcribe_kwargs["initial_prompt"] = _KRIOL_PROMPT
+            else:
+                transcribe_kwargs["language"] = "en"
+            result = model.transcribe(str(temp_path), **transcribe_kwargs)
             text = (result.get("text") or "").strip()
 
             if not text:
                 self.error.emit("I could not hear clearly. Please try again.")
                 return
+
+            # Apply Kriol phonetic correction when in Kriol mode
 
             self.transcription_ready.emit(text)
 
@@ -130,6 +155,7 @@ class QuestionsPage(QWidget):
         self._tts_thread = None
         self._voice_worker = None
         self._current_question_id = None
+        self._is_first_question_shown = True  # reset each time set_questions is called
 
         # ── Outer split: hero (left) + content (right) ────────────────────
         outer = QHBoxLayout(self)
@@ -323,8 +349,23 @@ class QuestionsPage(QWidget):
             }
             QPushButton:hover { background-color: rgba(139,58,46,0.20); }
         """)
+        self._help_btn = HelpButton(
+            en_title="Follow-up Questions",
+            en_text="We have a few questions to better understand your symptoms.\n\n"
+                    "• Read each question carefully and choose the best answer.\n"
+                    "• Use the pain scale (1–10) to rate how bad the pain is.\n"
+                    "• In voice mode, press the speaker button to hear the question.\n\n"
+                    "Press Next after each answer. You can press Back to go to the previous question.",
+            kr_title="Moa Kwestin",
+            kr_text="Mibala garrim sampela kwestin blong andastandim beta yu simptom.\n\n"
+                    "• Ridum ich kwestin klin en jusum bes ansa.\n"
+                    "• Yusum pein skeil (1–10) blong shoim hau nogud pein.\n"
+                    "• Langa vois mod, pres spika batn blong hia kwestin.\n\n"
+                    "Pres Nekis afta ich ansa. Yu ken pres Bek blong go bek long bifoa kwestin.",
+        )
         top_bar.addWidget(self.back_btn)
         top_bar.addStretch()
+        top_bar.addWidget(self._help_btn)
         root.insertLayout(0, top_bar)
 
         root.addWidget(self.question_card, 1)
@@ -350,12 +391,6 @@ class QuestionsPage(QWidget):
             background: transparent;
         """)
         scale_layout.addWidget(self.scale_title)
-
-        # Thin accent divider
-        _scale_divider = QFrame()
-        _scale_divider.setFixedHeight(3)
-        _scale_divider.setStyleSheet("background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #8B3A2E, stop:1 transparent); border:none; border-radius:2px;")
-        scale_layout.addWidget(_scale_divider)
         scale_layout.addSpacing(20)
 
         # Voice controls (speak-mode only)
@@ -659,6 +694,15 @@ class QuestionsPage(QWidget):
     def set_strings(self, s: dict):
         self.strings = s or {}
         is_kriol = self._is_kriol_mode()
+        self._help_btn.set_kriol(is_kriol)
+
+        self._hero_title.setText(
+            "Moa\nkwestin" if is_kriol else "Follow-up\nquestions"
+        )
+        self._hero_tag.setText(
+            "Helpim mibala\nandastandim\nyu simptom" if is_kriol
+            else "Help us understand\nyour symptoms better"
+        )
 
         self.scale_title.setText(
             self.strings.get(
@@ -692,12 +736,24 @@ class QuestionsPage(QWidget):
         self.scale_mic_btn.setText(
             "🎙️  Tok namba" if is_kriol else "🎙️  Say number"
         )
+        self._pain_selected_header.setText(
+            "Yu jusum:" if is_kriol else "You selected:"
+        )
+        # Refresh progress label so it shows in the right language immediately
+        progress_template = self.strings.get(
+            "question_progress",
+            "Kwestin {current} long {total}" if is_kriol else "Question {current} of {total}"
+        )
+        total_steps = max(len(self.questions) + 1, 1)
+        current_step = min(self.current_index + 1, total_steps)
+        self.progress_label.setText(progress_template.format(current=current_step, total=total_steps))
 
     def set_questions(self, original_text: str, english_meaning: str, questions: list):
         self.answers = {"pain_scale": self.answers.get("pain_scale", 3)}
         self.questions = questions or []
         self.current_index = 0
         self._current_question_id = None
+        self._is_first_question_shown = True
 
         you_said = self.strings.get("you_said_label", "You said")
         display_original = self._translate_display_text(original_text)
@@ -723,12 +779,13 @@ class QuestionsPage(QWidget):
         current_step = min(self.current_index + 1, total_steps)
         percent = int((current_step / total_steps) * 100)
 
-        progress_template = self.strings.get("question_progress", "Question {current} of {total}")
+        _default_progress = "Kwestin {current} long {total}" if self._is_kriol_mode() else "Question {current} of {total}"
+        progress_template = self.strings.get("question_progress", _default_progress)
         self.progress_label.setText(progress_template.format(current=current_step, total=total_steps))
         self.percent_label.setText(f"{percent}%")
         self.progress_bar.setValue(percent)
 
-        speak_mode = self.entry_mode == "voice"
+        speak_mode = False  # voice controls removed from follow-up questions
 
         self.speaker_btn.setVisible(speak_mode)
         self.mic_btn.setVisible(speak_mode)
@@ -745,8 +802,7 @@ class QuestionsPage(QWidget):
 
         if self.current_index >= len(self.questions):
             self._crossfade(self.question_card, self.scale_card)
-            if speak_mode:
-                QTimer.singleShot(520, self._auto_speak_current_question)
+            QTimer.singleShot(520, self._speak_rating_page)
             return
 
         question = self.questions[self.current_index]
@@ -771,8 +827,7 @@ class QuestionsPage(QWidget):
                 self._fade_widget(self.question_card, out=False)
             ))
 
-        if speak_mode:
-            QTimer.singleShot(520, self._auto_speak_current_question)
+        QTimer.singleShot(520, self._auto_speak_current_question)
 
     # ------------------------------------------------------------------
     # Fade helpers
@@ -908,11 +963,16 @@ class QuestionsPage(QWidget):
         self.answers["pain_scale"] = value
         color = self._pain_colors[value - 1]
         emoji = self._pain_labels[value - 1]
-        names = ["None", "Minimal", "Mild", "Moderate", "Uncomfortable",
-                 "Distressing", "Severe", "Intense", "Very Severe", "Unbearable"]
-        lbl = names[value - 1]
-        # Update info card
-        self._pain_level_label.setText(f"Level {value}  —  {lbl}")
+        if self._is_kriol_mode():
+            names = ["Nomo", "Smol smol", "Mild", "Midel", "No komftabel",
+                     "Nogud", "Strongpela", "Intens", "Togeta nogud", "Anbearabol"]
+            lbl = names[value - 1]
+            self._pain_level_label.setText(f"Lebul {value}  —  {lbl}")
+        else:
+            names = ["None", "Minimal", "Mild", "Moderate", "Uncomfortable",
+                     "Distressing", "Severe", "Intense", "Very Severe", "Unbearable"]
+            lbl = names[value - 1]
+            self._pain_level_label.setText(f"Level {value}  —  {lbl}")
         self._pain_level_label.setStyleSheet(f"""
             font-size: 18px; font-weight: 900; color: {color}; background: transparent;
         """)
@@ -939,41 +999,121 @@ class QuestionsPage(QWidget):
         return self._translate_question_text(question.get("text", ""))
 
     def _auto_speak_current_question(self):
-        if not self.auto_speak_enabled:
-            return
-
         self._speak_current_question()
 
+    def _speak_rating_page(self):
+        """Play rating audio then animate the 10 pain scale buttons sequentially."""
+        is_kriol = self.strings.get("back", "Back").strip().lower() == "bek"
+        audio = "Kriol-rating.mp3" if is_kriol else "English-rating.mp3"
+        _stop_all()
+        _play_sequence([audio], on_complete=self._animate_scale_buttons)
+
+    def _animate_scale_buttons(self):
+        """Nudge each of the 10 pain scale buttons one after another."""
+        for i, btn in enumerate(self.scale_buttons):
+            delay = i * 120
+            def _nudge(b=btn):
+                orig = b.geometry()
+                nudged = orig.translated(0, 10)
+                a1 = QPropertyAnimation(b, b"geometry", b)
+                a1.setDuration(110)
+                a1.setStartValue(orig)
+                a1.setEndValue(nudged)
+                a1.setEasingCurve(QEasingCurve.OutQuad)
+                a2 = QPropertyAnimation(b, b"geometry", b)
+                a2.setDuration(220)
+                a2.setStartValue(nudged)
+                a2.setEndValue(orig)
+                a2.setEasingCurve(QEasingCurve.OutBack)
+                a1.finished.connect(a2.start)
+                a1.start()
+                b._nudge_a1 = a1
+                b._nudge_a2 = a2
+            QTimer.singleShot(delay, _nudge)
+
     def _speak_current_question(self):
-        text = self._current_question_speech_text()
-        self._speak_text(text)
+        """Orchestrate audio for each question.
+        First question: play intro mp3 → prefix mp3 → TTS symptom word → animate buttons.
+        Later questions: play prefix mp3 → TTS symptom word → animate buttons.
+        """
+        is_kriol = self.strings.get("back", "Back").strip().lower() == "bek"
+
+        # Extract just the symptom word from "Do you also have {symptom}?"
+        if self.current_index < len(self.questions):
+            raw_text = self.questions[self.current_index].get("text", "")
+            import re as _re
+            m = _re.search(r"(?:do you also have|yu garr)\s+(.+?)\??$", raw_text.strip(), _re.IGNORECASE)
+            symptom_word = m.group(1).strip() if m else raw_text.strip()
+        else:
+            symptom_word = self.scale_title.text()
+
+        def _tts_then_animate():
+            self._speak_text(symptom_word)
+            QTimer.singleShot(400, self._animate_option_buttons)
+
+        prefix_file = "Kriol-followup2.mp3" if is_kriol else "English-followup2.mp3"
+
+        if self._is_first_question_shown:
+            self._is_first_question_shown = False
+            intro_file = "Kriol-followup1.mp3" if is_kriol else "English-followup1.mp3"
+            _stop_all()
+            _play_sequence([intro_file, prefix_file], on_complete=_tts_then_animate)
+        else:
+            _stop_all()
+            _play_sequence([prefix_file], on_complete=_tts_then_animate)
+
+    def _animate_option_buttons(self):
+        """Nudge all current option buttons with a staggered bounce."""
+        buttons = []
+        for i in range(self.options_grid.count()):
+            item = self.options_grid.itemAt(i)
+            if item and item.widget():
+                buttons.append(item.widget())
+        for i, btn in enumerate(buttons):
+            delay = i * 150
+            def _nudge(b=btn):
+                orig = b.geometry()
+                nudged = orig.translated(0, 10)
+                a1 = QPropertyAnimation(b, b"geometry", b)
+                a1.setDuration(120)
+                a1.setStartValue(orig)
+                a1.setEndValue(nudged)
+                a1.setEasingCurve(QEasingCurve.OutQuad)
+                a2 = QPropertyAnimation(b, b"geometry", b)
+                a2.setDuration(240)
+                a2.setStartValue(nudged)
+                a2.setEndValue(orig)
+                a2.setEasingCurve(QEasingCurve.OutBack)
+                a1.finished.connect(a2.start)
+                a1.start()
+                b._nudge_a1 = a1
+                b._nudge_a2 = a2
+            QTimer.singleShot(delay, _nudge)
 
     def _speak_text(self, text: str):
+        """Speak text using macOS built-in 'say' command (no pyttsx3 needed)."""
+        import subprocess, sys
         text = (text or "").strip()
         if not text:
             return
-
-        # If a speech thread is already running, do not start another one.
-        # This avoids repeated speaker clicks / auto-speak overlap.
         if self._tts_thread is not None and self._tts_thread.is_alive():
             return
 
         def speak_job():
             try:
-                import pyttsx3
-
-                engine = pyttsx3.init()
-                engine.setProperty("rate", 150)
-                engine.setProperty("volume", 1.0)
-
-                # Kriol is spoken phonetically using available system voice.
-                # English uses system default English voice.
-                engine.say(text)
-                engine.runAndWait()
-                try:
-                    engine.stop()
-                except Exception:
-                    pass
+                if sys.platform == "darwin":
+                    subprocess.run(["say", text], check=False)
+                else:
+                    import pyttsx3
+                    engine = pyttsx3.init()
+                    engine.setProperty("rate", 150)
+                    engine.setProperty("volume", 1.0)
+                    engine.say(text)
+                    engine.runAndWait()
+                    try:
+                        engine.stop()
+                    except Exception:
+                        pass
             except Exception as e:
                 print(f"TTS error: {e}")
 
@@ -1077,7 +1217,7 @@ class QuestionsPage(QWidget):
                 self._t("Speak your answer now.", "Tok yu ansa nau.")
             )
 
-        self._voice_worker = QuestionVoiceWorker(duration_seconds=4, whisper_model_name="small")
+        self._voice_worker = QuestionVoiceWorker(duration_seconds=4, whisper_model_name="small", is_kriol=self._is_kriol_mode())
         self._voice_worker.status_changed.connect(self._on_voice_status)
         self._voice_worker.transcription_ready.connect(self._on_voice_transcription)
         self._voice_worker.error.connect(self._on_voice_error)

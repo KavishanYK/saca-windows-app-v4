@@ -231,6 +231,19 @@ def _question_for_symptom(symptom: str, ui_language: str = "en") -> Dict:
 
 
 def _collect_nlp_symptoms(nlp_output: Dict) -> List[str]:
+    # Prefer canonical_symptoms — these are already deduplicated and have
+    # generic 'pain' stripped when a specific pain symptom is present.
+    # Fall back to symptoms_present only when canonical is absent.
+    negated = set(str(s) for s in (nlp_output.get("symptoms_negated") or []))
+
+    canonical = [
+        str(s) for s in (nlp_output.get("canonical_symptoms") or [])
+        if s and str(s) not in negated
+    ]
+    if canonical:
+        return canonical
+
+    # Fallback path: use symptoms_present but exclude negated ones
     symptoms: List[str] = []
     for key in ["symptoms", "symptoms_present", "extracted_symptoms", "present"]:
         for item in nlp_output.get(key, []) or []:
@@ -238,8 +251,10 @@ def _collect_nlp_symptoms(nlp_output: Dict) -> List[str]:
                 value = item.get("name") or item.get("symptom") or item.get("text")
             else:
                 value = item
-            if value and str(value) not in symptoms:
+            if value and str(value) not in symptoms and str(value) not in negated:
                 symptoms.append(str(value))
+        if symptoms:
+            break
     return symptoms
 
 
@@ -530,15 +545,15 @@ def _condition_name(symptoms: Iterable[str], triage_level: str, ui_language: str
             return "Skin infection — needs review" if not kr else "Skin infekshan — nid lukluk"
 
     # Mild conditions
-    if symptom_set & {"chest_pain", "severe_chest_pain", "difficulty_breathing", "shortness_of_breath"}:
+    if symptom_set & {"chest_pain", "severe_chest_pain", "difficulty_breathing", "shortness_of_breath", "breathing_problem"}:
         return "Breathing or chest problem" if not kr else "Brith o jes trabul"
+    if symptom_set & {"stomach_pain", "abdominal_pain", "vomiting", "diarrhea", "nausea"}:
+        return "Stomach upset" if not kr else "Beli trobul"
     if symptom_set & {"fever", "high_fever", "cough", "sore_throat", "body_aches", "fatigue", "runny_nose", "mild_fever", "mild_cough"}:
         return "A mild flu or cold" if not kr else "Liklik flu o kol"
-    if symptom_set & {"abdominal_pain", "vomiting", "diarrhea", "nausea"}:
-        return "Stomach upset" if not kr else "Beli trobul"
     if symptom_set & {"rash", "skin_rash", "skin_redness", "itching"}:
         return "Skin irritation" if not kr else "Skin trabul"
-    if symptom_set & {"headache", "severe_headache", "dizziness", "mild_headache"}:
+    if symptom_set & {"headache", "severe_headache", "dizziness", "dizzy", "mild_headache"}:
         return "Headache or dizziness" if not kr else "Hedake o dizi"
     return "General health concern" if not kr else "Jeneral helt trabul"
 
@@ -670,6 +685,14 @@ def run_final_assessment(nlp_output: Dict, answers: Dict, ui_language: str = "en
     answered_symptoms = _symptoms_from_answers(answers)
     all_symptoms = list(dict.fromkeys(initial_symptoms + answered_symptoms))
 
+    negated_symptoms = set(str(s) for s in (nlp_output.get("symptoms_negated") or []))
+    # Also build a set of negated canonical codes for post-filtering
+    from src.services.nlp_service import APP_SYMPTOM_MAP as _ASM
+    negated_codes = set()
+    for s in negated_symptoms:
+        negated_codes.add(_ASM.get(s, s.replace(" ", "_")))
+    negated_codes.update(negated_symptoms)
+
     extra_text = " ".join([
         str(nlp_output.get("translated_text_en", "")),
         str(nlp_output.get("mapped_text", "")),
@@ -677,9 +700,17 @@ def run_final_assessment(nlp_output: Dict, answers: Dict, ui_language: str = "en
         str(nlp_output.get("original_text", "")),
         " ".join(answered_symptoms),
     ])
+    # Remove negated symptom words from extra_text so the ML service
+    # does not re-detect symptoms the user explicitly denied
+    for neg in negated_symptoms:
+        extra_text = re.sub(r"\b" + re.escape(neg) + r"\b", "", extra_text, flags=re.IGNORECASE)
+    extra_text = re.sub(r"\s+", " ", extra_text).strip()
 
     final_ml = assess_symptoms(all_symptoms, extra_text=extra_text)
-    final_symptoms = list(dict.fromkeys((final_ml.input_symptoms or []) + answered_symptoms))
+    final_symptoms = [
+        s for s in list(dict.fromkeys((final_ml.input_symptoms or []) + answered_symptoms))
+        if s not in negated_codes
+    ]
 
     triage_level = _triage_from_ml(final_ml, final_symptoms)
     ats_level = _ats_from_triage(triage_level)
